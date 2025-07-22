@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Involex Email Analyzer - Settings</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 40px;
+      background: #f8f9fa;
+      line-height: 1.6;
+    }
+    
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      overflow: hidden;
+    }
+    
+    .header {
+      background: linear-gradient(135deg, #2563eb, #3b82f6);
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+    
+    .header h1 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 600;
+    }
+    
+    .header p {
+      margin: 8px 0 0 0;
+      opacity: 0.9;
+    }
+    
+    .content {
+      padding: 30px;
+    }
+    
+    .section {
+      margin-bottom: 30px;
+      padding-bottom: 25px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    
+    .section:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+    }
+    
+    .section h2 {
+      margin: 0 0 15px 0;
+      color: #374151;
+      font-size: 18px;
+    }
+    
+    .setting-item {
+      margin-bottom: 20px;
+    }
+    
+    .setting-item label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 500;
+      color: #374151;
+    }
+    
+    .setting-item input, .setting-item select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    
+    .setting-item input:focus, .setting-item select:focus {
+      outline: none;
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    
+    .setting-description {
+      font-size: 13px;
+      color: #6b7280;
+      margin-top: 5px;
+    }
+    
+    .checkbox-item {
+      display: flex;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+    
+    .checkbox-item input[type="checkbox"] {
+      width: auto;
+      margin-right: 10px;
+    }
+    
+    .status-indicator {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      margin-left: 10px;
+    }
+    
+    .status-indicator.success {
+      background: #dcfce7;
+      color: #166534;
+    }
+    
+    .status-indicator.error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    
+    .btn {
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 10px 20px;
+      font-size: 14px;
+      cursor: pointer;
+      margin-right: 10px;
+    }
+    
+    .btn:hover {
+      background: #1d4ed8;
+    }
+    
+    .btn.secondary {
+      background: #6b7280;
+    }
+    
+    .btn.secondary:hover {
+      background: #4b5563;
+    }
+    
+    .test-result {
+      margin-top: 15px;
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      display: none;
+    }
+    
+    .test-result.success {
+      background: #dcfce7;
+      color: #166534;
+      border: 1px solid #bbf7d0;
+    }
+    
+    .test-result.error {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>📧 Involex Email Analyzer</h1>
+      <p>Configure your email analysis settings</p>
+    </div>
+    
+    <div class="content">
+      <div class="section">
+        <h2>API Configuration</h2>
+        
+        <div class="setting-item">
+          <label for="apiUrl">Django API URL</label>
+          <input type="url" id="apiUrl" value="http://127.0.0.1:8000/api/summarize-email/" />
+          <div class="setting-description">
+            The URL of your Django API endpoint for email summarization
+          </div>
+        </div>
+        
+        <div class="setting-item">
+          <button class="btn" id="testConnection">Test Connection</button>
+          <span id="connectionStatus"></span>
+          <div class="test-result" id="testResult"></div>
+        </div>
+      </div>
+      
+      <div class="section">
+        <h2>Email Monitoring</h2>
+        
+        <div class="checkbox-item">
+          <input type="checkbox" id="enableGmail" checked />
+          <label for="enableGmail">Monitor Gmail</label>
+        </div>
+        
+        <div class="checkbox-item">
+          <input type="checkbox" id="enableOutlook" checked />
+          <label for="enableOutlook">Monitor Outlook</label>
+        </div>
+        
+        <div class="setting-item">
+          <label for="minEmailLength">Minimum Email Length (words)</label>
+          <input type="number" id="minEmailLength" value="5" min="1" max="100" />
+          <div class="setting-description">
+            Only analyze emails longer than this many words
+          </div>
+        </div>
+      </div>
+      
+      <div class="section">
+        <h2>Notifications</h2>
+        
+        <div class="checkbox-item">
+          <input type="checkbox" id="showNotifications" checked />
+          <label for="showNotifications">Show analysis notifications</label>
+        </div>
+        
+        <div class="setting-item">
+          <label for="notificationDuration">Notification Duration (seconds)</label>
+          <input type="number" id="notificationDuration" value="8" min="3" max="30" />
+          <div class="setting-description">
+            How long to show notifications on the page
+          </div>
+        </div>
+      </div>
+      
+      <div class="section">
+        <h2>Data Management</h2>
+        
+        <div class="setting-item">
+          <label for="maxStoredAnalyses">Maximum Stored Analyses</label>
+          <input type="number" id="maxStoredAnalyses" value="50" min="10" max="500" />
+          <div class="setting-description">
+            Number of analysis results to keep in local storage
+          </div>
+        </div>
+        
+        <div class="setting-item">
+          <button class="btn secondary" id="clearData">Clear All Stored Data</button>
+          <div class="setting-description">
+            Remove all stored email analyses from local storage
+          </div>
+        </div>
+      </div>
+      
+      <div class="section">
+        <button class="btn" id="saveSettings">Save Settings</button>
+        <button class="btn secondary" id="resetSettings">Reset to Defaults</button>
+      </div>
+    </div>
+  </div>
+  
+  <script src="settings.js"></script>
+</body>
+</html> 
