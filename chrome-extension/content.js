@@ -440,5 +440,11 @@ class EmailAnalyzer {
 }
 
 // Initialize the email analyzer
-console.log('🔧 DEBUG: Involex extension loaded on:', window.location.hostname);
-const emailAnalyzer = new EmailAnalyzer(); 
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    console.log('🔧 DEBUG: Involex extension loaded on:', window.location.hostname);
+    const emailAnalyzer = new EmailAnalyzer();
+  } catch (error) {
+    console.error('❌ Failed to initialize EmailAnalyzer:', error);
+  }
+}); 
