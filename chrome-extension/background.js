@@ -1,4 +1,19 @@
 // Background script for handling API calls
+
+// Default configuration
+const DEFAULT_CONFIG = {
+  apiUrl: 'http://127.0.0.1:8000/api/summarize-email/',
+  timeout: 30000, // 30 seconds
+};
+
+// Initialize configuration
+chrome.runtime.onInstalled.addListener(async () => {
+  const config = await chrome.storage.sync.get(['apiUrl', 'timeout']);
+  if (!config.apiUrl) {
+    await chrome.storage.sync.set(DEFAULT_CONFIG);
+  }
+});
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log('🔧 DEBUG: Background script received message:', request.action);
   
@@ -10,7 +25,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       })
       .catch(error => {
         console.error('❌ DEBUG: Background script error:', error);
-        sendResponse({ success: false, error: error.message });
+        // Send back a more detailed error object
+        sendResponse({ 
+          success: false, 
+          error: {
+            message: error.message,
+            type: error.name,
+            details: error.stack
+          }
+        });
       });
     
     // Return true to indicate we'll send a response asynchronously
@@ -23,22 +46,36 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 async function analyzeEmail(emailData) {
   try {
-    const API_URL = 'http://127.0.0.1:8000/api/summarize-email/';
+    // Get current configuration
+    const config = await chrome.storage.sync.get(['apiUrl', 'timeout']);
+    const API_URL = config.apiUrl || DEFAULT_CONFIG.apiUrl;
+    const TIMEOUT = config.timeout || DEFAULT_CONFIG.timeout;
     
     console.log('🔧 DEBUG: Sending email data to Django API:', emailData);
     console.log('🔧 DEBUG: API URL:', API_URL);
     
     const requestBody = JSON.stringify(emailData);
     console.log('🔧 DEBUG: Request body:', requestBody);
+
+    // Create AbortController for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
     
     const response = await fetch(API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
+        'Origin': chrome.runtime.getURL(''),
+        'X-Requested-With': 'XMLHttpRequest'
       },
-      body: requestBody
+      body: requestBody,
+      signal: controller.signal,
+      credentials: 'include',
+      mode: 'cors'
     });
+
+    clearTimeout(timeoutId);
 
     console.log('🔧 DEBUG: Response status:', response.status);
     console.log('🔧 DEBUG: Response headers:', [...response.headers.entries()]);
@@ -46,7 +83,7 @@ async function analyzeEmail(emailData) {
     if (!response.ok) {
       const errorText = await response.text();
       console.error('🔧 DEBUG: Error response body:', errorText);
-      throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+      throw new Error(`API Error: ${response.status} - ${errorText}`);
     }
 
     const result = await response.json();
@@ -64,6 +101,14 @@ async function analyzeEmail(emailData) {
     return result;
   } catch (error) {
     console.error('❌ DEBUG: Error calling Django API:', error);
+    
+    // Enhance error handling with specific error types
+    if (error.name === 'AbortError') {
+      throw new Error(`Request timed out after ${DEFAULT_CONFIG.timeout/1000} seconds`);
+    } else if (error.message.includes('Failed to fetch')) {
+      throw new Error('Unable to connect to the API. Please check if the server is running and accessible.');
+    }
+    
     throw error;
   }
 }
