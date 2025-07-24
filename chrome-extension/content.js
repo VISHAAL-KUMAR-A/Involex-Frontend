@@ -173,24 +173,43 @@ class EmailAnalyzer {
       // Extract recipient(s) - improved logic
       let recipient = '';
       
-      // Try multiple selectors for recipient email
+      // Try multiple selectors for recipient email with better targeting
       const toSelectors = [
-        'input[type="email"]',
-        '[data-hovercard-id*="@"]',
+        // Direct input fields
         'input[name="to"]',
+        'input[type="email"]',
+        // Gmail specific selectors
+        'div[data-hovercard-id*="@"]',
         'span[email]',
         'div[email]',
+        // Aria labeled fields
         '[aria-label*="To"] input',
-        'div[data-name="to"] input'
+        '[aria-label*="Recipients"] input',
+        // Data attribute based selectors
+        '[data-recipient-type="to"] input',
+        'div[data-name="to"] input',
+        // Generic email fields
+        '[contenteditable="true"][aria-label*="To"]',
+        // Chip elements (Gmail's recipient bubbles)
+        'div[role="chip"] span[email]',
+        'div[role="chip"] [data-hovercard-id*="@"]'
       ];
       
+      // First try within the compose window
       for (const selector of toSelectors) {
         const elements = composeWindow.querySelectorAll(selector);
         for (const element of elements) {
-          const emailValue = element.value || element.getAttribute('email') || element.getAttribute('data-hovercard-id') || element.textContent;
+          const emailValue = element.value || 
+                           element.getAttribute('email') || 
+                           element.getAttribute('data-hovercard-id') || 
+                           element.textContent;
+          
           if (emailValue && emailValue.includes('@')) {
-            recipient = emailValue;
-            break;
+            const match = emailValue.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+            if (match) {
+              recipient = match[1];
+              break;
+            }
           }
         }
         if (recipient) break;
@@ -198,9 +217,9 @@ class EmailAnalyzer {
       
       // If still no recipient found, try to extract from spans with email pattern
       if (!recipient) {
-        const allSpans = composeWindow.querySelectorAll('span, div');
-        for (const span of allSpans) {
-          const text = span.textContent || span.innerText || '';
+        const allElements = composeWindow.querySelectorAll('*');
+        for (const element of allElements) {
+          const text = element.textContent || element.innerText || '';
           const emailMatch = text.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
           if (emailMatch) {
             recipient = emailMatch[1];
@@ -209,24 +228,53 @@ class EmailAnalyzer {
         }
       }
 
-      // Extract subject
-      const subjectField = composeWindow.querySelector('input[name="subjectbox"], [placeholder*="Subject"], input[aria-label*="Subject"]');
-      const subject = subjectField ? subjectField.value : '';
+      // Extract subject with improved selectors
+      const subjectSelectors = [
+        'input[name="subjectbox"]',
+        'input[placeholder*="Subject"]',
+        'input[aria-label*="Subject"]',
+        '[role="textbox"][aria-label*="Subject"]',
+        'input.aoT'
+      ];
+      
+      let subject = '';
+      for (const selector of subjectSelectors) {
+        const element = composeWindow.querySelector(selector);
+        if (element) {
+          subject = element.value || element.textContent || '';
+          if (subject) break;
+        }
+      }
 
-      // Extract email body
-      const bodyField = composeWindow.querySelector('[contenteditable="true"][role="textbox"], [contenteditable="true"] div[dir="ltr"], [role="textbox"][contenteditable="true"]');
-      const emailContent = bodyField ? bodyField.textContent || bodyField.innerText : '';
+      // Extract email body with improved selectors
+      const bodySelectors = [
+        '[contenteditable="true"][role="textbox"]',
+        '[contenteditable="true"] div[dir="ltr"]',
+        '[role="textbox"][contenteditable="true"]',
+        'div.Am.Al.editable'
+      ];
+      
+      let emailContent = '';
+      for (const selector of bodySelectors) {
+        const element = composeWindow.querySelector(selector);
+        if (element) {
+          emailContent = element.textContent || element.innerText || '';
+          if (emailContent) break;
+        }
+      }
 
       // Get sender email (current user) - improved logic
       let senderEmail = '';
       
-      // Try to get from account info
+      // Try to get from account info with improved selectors
       const senderSelectors = [
         '[data-hovercard-id*="@"]',
         '[title*="@"]',
         '.gb_A',
         '[aria-label*="Account"]',
-        '.gb_uc' // Gmail user container
+        '.gb_uc',
+        '[data-tooltip*="@"]',
+        '.gmail-attr [email]'
       ];
       
       for (const selector of senderSelectors) {
@@ -234,30 +282,29 @@ class EmailAnalyzer {
         if (element) {
           const emailValue = element.getAttribute('data-hovercard-id') || 
                            element.getAttribute('title') || 
+                           element.getAttribute('data-tooltip') ||
+                           element.getAttribute('email') ||
                            element.textContent || 
                            element.innerText;
           
           if (emailValue && emailValue.includes('@')) {
-            senderEmail = emailValue;
-            break;
-          }
-        }
-      }
-      
-      // If no sender found, try URL parameter (Gmail sometimes has it)
-      if (!senderEmail) {
-        const urlMatch = window.location.href.match(/authuser=(\d+)/);
-        if (urlMatch) {
-          // Try to get from Gmail account switcher
-          const accountElements = document.querySelectorAll('[data-email*="@"]');
-          if (accountElements.length > 0) {
-            senderEmail = accountElements[0].getAttribute('data-email');
+            const match = emailValue.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+            if (match) {
+              senderEmail = match[1];
+              break;
+            }
           }
         }
       }
 
-      console.log('🔧 DEBUG: Extracted recipient:', recipient);
-      console.log('🔧 DEBUG: Extracted sender:', senderEmail);
+      console.log('🔧 DEBUG: Extracted email data:', {
+        recipient_found: Boolean(recipient),
+        recipient: recipient,
+        subject_found: Boolean(subject),
+        content_length: emailContent?.length || 0,
+        sender_found: Boolean(senderEmail),
+        sender: senderEmail
+      });
 
       return {
         email_content: emailContent.trim(),
@@ -308,19 +355,38 @@ class EmailAnalyzer {
   }
 
   isValidEmail(emailData) {
-    // Email validation regex
-    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    
-    const isValid = emailData.email_content && 
-           emailData.email_content.length > 10 && 
-           emailData.recipient_email &&
-           emailRegex.test(emailData.recipient_email) && // Validate recipient email format
-           emailData.subject;
-    
-    console.log('🔧 DEBUG: Email validation result:', isValid);
-    console.log('🔧 DEBUG: Recipient email valid:', emailRegex.test(emailData.recipient_email));
-    
-    return isValid;
+    try {
+      // Email validation regex
+      const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+      
+      // Check if all required fields exist
+      if (!emailData || typeof emailData !== 'object') {
+        console.error('❌ DEBUG: Invalid email data object:', emailData);
+        return false;
+      }
+
+      // Validate each field
+      const hasContent = Boolean(emailData.email_content && emailData.email_content.length > 10);
+      const hasRecipient = Boolean(emailData.recipient_email && emailData.recipient_email.trim());
+      const hasValidRecipient = hasRecipient && emailRegex.test(emailData.recipient_email.trim());
+      const hasSubject = Boolean(emailData.subject && emailData.subject.trim());
+      
+      // Log validation details
+      console.log('🔧 DEBUG: Email validation details:', {
+        hasContent,
+        hasRecipient,
+        hasValidRecipient,
+        hasSubject,
+        contentLength: emailData.email_content?.length || 0,
+        recipient: emailData.recipient_email || 'none',
+        subject: emailData.subject || 'none'
+      });
+      
+      return hasContent && hasValidRecipient && hasSubject;
+    } catch (error) {
+      console.error('❌ DEBUG: Error in email validation:', error);
+      return false;
+    }
   }
 
   generateEmailKey(emailData) {
@@ -329,41 +395,73 @@ class EmailAnalyzer {
 
   async sendToAPI(emailData) {
     try {
-      console.log('🔧 DEBUG: Extracted email data:', emailData);
-      console.log('🔧 DEBUG: Email content length:', emailData.email_content.length);
-      console.log('🔧 DEBUG: Sender email:', emailData.sender_email);
-      console.log('🔧 DEBUG: Recipient email:', emailData.recipient_email);
-      console.log('🔧 DEBUG: Subject:', emailData.subject);
+      // Validate email data before sending
+      if (!this.isValidEmail(emailData)) {
+        console.error('❌ DEBUG: Invalid email data, not sending to API:', emailData);
+        this.showErrorNotification('Invalid email data. Please ensure all fields are filled out correctly.');
+        return;
+      }
+
+      console.log('🔧 DEBUG: Sending email data:', {
+        content_length: emailData.email_content?.length,
+        sender: emailData.sender_email,
+        recipient: emailData.recipient_email,
+        subject: emailData.subject
+      });
       
       // Check if extension context is valid
       if (!chrome.runtime?.id) {
-        console.error('❌ Extension context invalidated - please reload extension');
-        this.showErrorNotification('Extension needs to be reloaded. Please refresh the page.');
+        console.error('❌ Extension context invalidated - reloading extension');
+        // Try to recover by reloading the page after a short delay
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
         return;
       }
       
-      // Send to background script with error handling
-      chrome.runtime.sendMessage({
-        action: 'analyzeEmail',
-        data: emailData
-      }, (response) => {
-        // Check for chrome.runtime.lastError
-        if (chrome.runtime.lastError) {
-          console.error('❌ Chrome runtime error:', chrome.runtime.lastError);
-          this.showErrorNotification('Extension error: ' + chrome.runtime.lastError.message);
-          return;
-        }
-        
-        console.log('🔧 DEBUG: Background script response:', response);
-        
-        if (response && response.success) {
-          console.log('✅ Email analysis completed:', response.result);
-          this.showAnalysisResult(response.result);
-        } else {
-          console.error('❌ Email analysis failed:', response?.error);
-          this.showErrorNotification(response?.error || 'API request failed');
-        }
+      // Send to background script with error handling and timeout
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Message timeout')), 5000);
       });
+
+      const messagePromise = new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          action: 'analyzeEmail',
+          data: emailData
+        }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.error('❌ Chrome runtime error:', chrome.runtime.lastError);
+            this.showErrorNotification('Extension error: ' + chrome.runtime.lastError.message);
+            resolve(null);
+            return;
+          }
+          resolve(response);
+        });
+      });
+
+      // Race between timeout and message
+      const response = await Promise.race([messagePromise, timeoutPromise])
+        .catch(error => {
+          console.error('❌ Message sending failed:', error);
+          this.showErrorNotification('Failed to send message to extension: ' + error.message);
+          return null;
+        });
+
+      if (!response) return;
+      
+      console.log('🔧 DEBUG: Background script response:', response);
+      
+      if (response.success) {
+        console.log('✅ Email analysis completed:', response.result);
+        this.showAnalysisResult(response.result);
+      } else {
+        console.error('❌ Email analysis failed:', response?.error);
+        this.showErrorNotification(
+          typeof response?.error === 'object' 
+            ? `${response.error.message}\n${response.error.details || ''}`
+            : (response?.error || 'API request failed')
+        );
+      }
     } catch (error) {
       console.error('🔧 DEBUG: Error in sendToAPI:', error);
       this.showErrorNotification('Extension error: ' + error.message);
