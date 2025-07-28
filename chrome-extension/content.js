@@ -4,7 +4,39 @@ class EmailAnalyzer {
     this.isGmail = window.location.hostname === 'mail.google.com';
     this.isOutlook = window.location.hostname.includes('outlook');
     this.lastAnalyzedEmail = '';
+    this.showLoadNotification();
     this.init();
+  }
+
+  showLoadNotification() {
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #3b82f6;
+      color: white;
+      padding: 15px;
+      border-radius: 5px;
+      z-index: 10000;
+      max-width: 300px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+    `;
+    
+    notification.innerHTML = `
+      <div style="font-weight: bold; margin-bottom: 8px;">🔌 Involex Extension Loaded</div>
+      <div>Email analysis is ready!</div>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+      if (notification.parentNode) {
+        notification.parentNode.removeChild(notification);
+      }
+    }, 5000);
   }
 
   init() {
@@ -77,9 +109,15 @@ class EmailAnalyzer {
     if (sendButton && !sendButton.hasAttribute('data-involex-monitored')) {
       sendButton.setAttribute('data-involex-monitored', 'true');
       
-      sendButton.addEventListener('click', (e) => {
-        setTimeout(() => {
-          this.analyzeGmailEmail(composeWindow);
+      sendButton.addEventListener('click', async (e) => {
+        // Don't prevent the default action
+        // Instead, wait a moment to let Gmail process the email
+        setTimeout(async () => {
+          try {
+            await this.analyzeGmailEmail(composeWindow);
+          } catch (error) {
+            console.error('Failed to analyze email:', error);
+          }
         }, 100);
       });
     }
@@ -100,7 +138,7 @@ class EmailAnalyzer {
   }
 
   monitorGmailSendButton() {
-    document.addEventListener('click', (e) => {
+    document.addEventListener('click', async (e) => {
       const target = e.target;
       
       // Check if clicked element is a send button
@@ -109,8 +147,13 @@ class EmailAnalyzer {
         
         const composeWindow = target.closest('[role="dialog"]');
         if (composeWindow) {
-          setTimeout(() => {
-            this.analyzeGmailEmail(composeWindow);
+          // Don't prevent default, let Gmail handle the send
+          setTimeout(async () => {
+            try {
+              await this.analyzeGmailEmail(composeWindow);
+            } catch (error) {
+              console.error('Failed to analyze email:', error);
+            }
           }, 500);
         }
       }
@@ -138,16 +181,29 @@ class EmailAnalyzer {
     try {
       const emailData = this.extractGmailData(composeWindow);
       
-      if (emailData && this.isValidEmail(emailData)) {
+      if (!emailData) {
+        console.log('No email data extracted, skipping analysis');
+        return;
+      }
+
+      console.log('Extracted email data:', emailData);
+      
+      if (this.isValidEmail(emailData)) {
         const emailKey = this.generateEmailKey(emailData);
         
         if (emailKey !== this.lastAnalyzedEmail) {
           this.lastAnalyzedEmail = emailKey;
           await this.sendToAPI(emailData);
+        } else {
+          console.log('Email already analyzed, skipping duplicate');
         }
+      } else {
+        console.log('Invalid email data:', emailData);
       }
     } catch (error) {
       console.error('Error analyzing Gmail email:', error);
+      // Don't show error notification for every failed attempt
+      // Only show for specific error cases in sendToAPI
     }
   }
 

@@ -8,24 +8,33 @@ const DEFAULT_CONFIG = {
 
 // Initialize configuration
 chrome.runtime.onInstalled.addListener(async () => {
+  console.log('🔧 Extension installed/updated');
   const config = await chrome.storage.sync.get(['apiUrl', 'timeout']);
   if (!config.apiUrl) {
+    console.log('🔧 Setting default configuration');
     await chrome.storage.sync.set(DEFAULT_CONFIG);
   }
+  console.log('🔧 Current configuration:', config);
 });
 
+// Log when the background script starts
+console.log('🔧 Background script started');
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  console.log('🔧 DEBUG: Background script received message:', request.action);
+  console.log('🔧 Background script received message:', {
+    action: request.action,
+    sender: sender.tab?.url || 'unknown',
+    data: request.data
+  });
   
   if (request.action === 'analyzeEmail') {
     analyzeEmail(request.data)
       .then(result => {
-        console.log('✅ DEBUG: Sending success response:', result);
+        console.log('✅ Sending success response:', result);
         sendResponse({ success: true, result: result });
       })
       .catch(error => {
-        console.error('❌ DEBUG: Background script error:', error);
-        // Send back a more detailed error object
+        console.error('❌ Background script error:', error);
         sendResponse({ 
           success: false, 
           error: {
@@ -51,45 +60,50 @@ async function analyzeEmail(emailData) {
     const API_URL = config.apiUrl || DEFAULT_CONFIG.apiUrl;
     const TIMEOUT = config.timeout || DEFAULT_CONFIG.timeout;
     
-    console.log('🔧 DEBUG: Sending email data to Django API:', emailData);
-    console.log('🔧 DEBUG: API URL:', API_URL);
-    
-    const requestBody = JSON.stringify(emailData);
-    console.log('🔧 DEBUG: Request body:', requestBody);
+    console.log('🔧 DEBUG: Making API request to:', API_URL);
+    console.log('🔧 DEBUG: Request data:', {
+      content_length: emailData.email_content?.length,
+      recipient: emailData.recipient_email,
+      subject: emailData.subject?.length
+    });
 
-    // Create AbortController for timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
+    const requestBody = JSON.stringify(emailData);
+
+    // Log the exact request we're about to make
+    console.log('🔧 DEBUG: Request details:', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      bodyLength: requestBody.length
+    });
     
     const response = await fetch(API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Origin': chrome.runtime.getURL(''),
-        'X-Requested-With': 'XMLHttpRequest'
+        'Accept': 'application/json'
       },
-      body: requestBody,
-      signal: controller.signal,
-      credentials: 'include',
-      mode: 'cors'
+      body: requestBody
     });
-
-    clearTimeout(timeoutId);
-
-    console.log('🔧 DEBUG: Response status:', response.status);
-    console.log('🔧 DEBUG: Response headers:', [...response.headers.entries()]);
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('🔧 DEBUG: Error response body:', errorText);
+      console.error('❌ API Error:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: errorText,
+        url: API_URL,
+        headers: Object.fromEntries(response.headers)
+      });
       throw new Error(`API Error: ${response.status} - ${errorText}`);
     }
 
     const result = await response.json();
-    console.log('✅ DEBUG: API response:', result);
+    console.log('✅ API Success:', result);
     
-    // Store the analysis result in chrome storage for later retrieval
+    // Store the analysis result
     await chrome.storage.local.set({
       [`analysis_${Date.now()}`]: {
         timestamp: new Date().toISOString(),
@@ -100,15 +114,11 @@ async function analyzeEmail(emailData) {
     
     return result;
   } catch (error) {
-    console.error('❌ DEBUG: Error calling Django API:', error);
-    
-    // Enhance error handling with specific error types
-    if (error.name === 'AbortError') {
-      throw new Error(`Request timed out after ${DEFAULT_CONFIG.timeout/1000} seconds`);
-    } else if (error.message.includes('Failed to fetch')) {
-      throw new Error('Unable to connect to the API. Please check if the server is running and accessible.');
-    }
-    
+    console.error('❌ Error in analyzeEmail:', {
+      name: error.name,
+      message: error.message,
+      cause: error.cause
+    });
     throw error;
   }
 }
