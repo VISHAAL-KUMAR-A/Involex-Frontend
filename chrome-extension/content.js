@@ -3,7 +3,10 @@ class EmailAnalyzer {
   constructor() {
     this.isGmail = window.location.hostname === 'mail.google.com';
     this.isOutlook = window.location.hostname.includes('outlook');
-    this.lastAnalyzedEmail = '';
+    this.lastAnalyzedEmail = null;
+    this.matterSelectContainer = null;
+    this.matters = [];
+    this.loadClioMatters();
     this.init();
   }
 
@@ -71,6 +74,90 @@ class EmailAnalyzer {
     });
   }
 
+  // Load Clio matters
+  async loadClioMatters() {
+    try {
+      const { clioUserEmail } = await new Promise(resolve => {
+        chrome.storage.local.get(['clioUserEmail'], resolve);
+      });
+      
+      if (clioUserEmail) {
+        const response = await new Promise(resolve => {
+          chrome.runtime.sendMessage({ action: 'fetchClioMatters' }, resolve);
+        });
+        
+        if (response.success) {
+          this.matters = response.matters;
+        }
+      }
+    } catch (error) {
+      console.error('Error loading Clio matters:', error);
+    }
+  }
+
+  // Create matter selection UI
+  createMatterSelect() {
+    if (!this.matterSelectContainer) {
+      this.matterSelectContainer = document.createElement('div');
+      this.matterSelectContainer.className = 'involex-matter-select';
+      this.matterSelectContainer.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        z-index: 9999;
+        display: none;
+      `;
+      
+      const content = `
+        <h3 style="margin: 0 0 15px">Select Clio Matter</h3>
+        <select id="clioMatterSelect" style="width: 100%; padding: 8px; margin-bottom: 15px">
+          <option value="">Select a matter...</option>
+          ${this.matters.map(matter => 
+            `<option value="${matter.id}">${matter.display_number} - ${matter.description}</option>`
+          ).join('')}
+        </select>
+        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+          <button id="cancelMatterSelect" style="padding: 8px 16px">Cancel</button>
+          <button id="confirmMatterSelect" style="padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px">Confirm</button>
+        </div>
+      `;
+      
+      this.matterSelectContainer.innerHTML = content;
+      document.body.appendChild(this.matterSelectContainer);
+      
+      // Add event listeners
+      document.getElementById('cancelMatterSelect').addEventListener('click', () => {
+        this.matterSelectContainer.style.display = 'none';
+      });
+    }
+    return this.matterSelectContainer;
+  }
+
+  // Show matter selection dialog
+  async showMatterSelect() {
+    return new Promise((resolve) => {
+      const container = this.createMatterSelect();
+      container.style.display = 'block';
+      
+      const select = document.getElementById('clioMatterSelect');
+      const confirmBtn = document.getElementById('confirmMatterSelect');
+      
+      const handleConfirm = () => {
+        const matterId = select.value;
+        container.style.display = 'none';
+        confirmBtn.removeEventListener('click', handleConfirm);
+        resolve(matterId);
+      };
+      
+      confirmBtn.addEventListener('click', handleConfirm);
+    });
+  }
+
   setupGmailComposeMonitoring(composeWindow) {
     const sendButton = composeWindow.querySelector('[data-tooltip="Send ‪(Ctrl+Enter)‬"], [data-tooltip="Send"], [aria-label*="Send"]');
     
@@ -78,9 +165,10 @@ class EmailAnalyzer {
       sendButton.setAttribute('data-involex-monitored', 'true');
       
       sendButton.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
         console.log('🔧 DEBUG: Send button clicked');
-        // Wait for email data to be ready
-        await new Promise(resolve => setTimeout(resolve, 500));
         
         try {
           const emailData = this.extractGmailData(composeWindow);
@@ -93,8 +181,18 @@ class EmailAnalyzer {
           });
           
           if (emailData && this.isValidEmail(emailData)) {
-            const emailKey = this.generateEmailKey(emailData);
+            const { clioUserEmail } = await new Promise(resolve => {
+              chrome.storage.local.get(['clioUserEmail'], resolve);
+            });
             
+            if (clioUserEmail) {
+              const matterId = await this.showMatterSelect();
+              if (matterId) {
+                emailData.matter_id = matterId;
+              }
+            }
+            
+            const emailKey = this.generateEmailKey(emailData);
             if (emailKey !== this.lastAnalyzedEmail) {
               this.lastAnalyzedEmail = emailKey;
               await this.sendToAPI(emailData);
@@ -104,6 +202,14 @@ class EmailAnalyzer {
           } else {
             console.log('🔧 DEBUG: Invalid email data, not sending to API');
           }
+          
+          // Trigger the original send button click
+          const nativeEvent = new MouseEvent('click', {
+            bubbles: true,
+            cancelable: true,
+            view: window
+          });
+          sendButton.dispatchEvent(nativeEvent);
         } catch (error) {
           console.error('🔧 DEBUG: Error in send button handler:', error);
         }

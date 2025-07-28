@@ -28,9 +28,59 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   return true;
 });
 
+// Handle Clio OAuth callback
+chrome.webNavigation.onCompleted.addListener(async (details) => {
+  if (details.url.includes('http://127.0.0.1:8000/api/clio/callback/')) {
+    const url = new URL(details.url);
+    const code = url.searchParams.get('code');
+    
+    if (code) {
+      try {
+        const response = await fetch(`http://127.0.0.1:8000/api/clio/callback/?code=${code}`);
+        const data = await response.json();
+        
+        // Notify settings page about successful auth
+        chrome.runtime.sendMessage({
+          action: 'clioAuthSuccess',
+          email: data.email
+        });
+        
+        // Close the auth window
+        chrome.tabs.remove(details.tabId);
+      } catch (error) {
+        console.error('Error completing Clio authentication:', error);
+      }
+    }
+  }
+});
+
+// Fetch Clio matters
+async function fetchClioMatters() {
+  try {
+    const { clioUserEmail } = await chrome.storage.local.get(['clioUserEmail']);
+    if (!clioUserEmail) {
+      throw new Error('User not logged in to Clio');
+    }
+    
+    const response = await fetch(`http://127.0.0.1:8000/api/clio/matters/?email=${encodeURIComponent(clioUserEmail)}`);
+    const data = await response.json();
+    return data.matters;
+  } catch (error) {
+    console.error('Error fetching Clio matters:', error);
+    throw error;
+  }
+}
+
+// Update analyzeEmail function to handle Clio integration
 async function analyzeEmail(emailData) {
   try {
     const API_URL = 'http://127.0.0.1:8000/api/summarize-email/';
+    
+    // Add Clio user email if available
+    const { clioUserEmail } = await chrome.storage.local.get(['clioUserEmail']);
+    if (clioUserEmail) {
+      emailData.sender_email = clioUserEmail;
+    }
     
     console.log('🔧 DEBUG: Preparing API request');
     
@@ -110,6 +160,16 @@ async function analyzeEmail(emailData) {
     throw error;
   }
 }
+
+// Add message listener for matter fetching
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'fetchClioMatters') {
+    fetchClioMatters()
+      .then(matters => sendResponse({ success: true, matters }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true; // Keep the message channel open for async response
+  }
+});
 
 // Clean up old stored analyses (keep only last 50)
 chrome.runtime.onStartup.addListener(async () => {

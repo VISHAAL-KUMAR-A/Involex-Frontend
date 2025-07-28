@@ -219,3 +219,54 @@ function showNotification(message, type) {
     }
   }, 3000);
 } 
+
+// Clio Integration
+const clioLoginBtn = document.getElementById('clioLoginBtn');
+const clioLogoutBtn = document.getElementById('clioLogoutBtn');
+const clioLoginStatus = document.getElementById('clioLoginStatus');
+const clioUserEmail = document.getElementById('clioUserEmail');
+
+// Check if user is already logged in to Clio
+chrome.storage.local.get(['clioUserEmail'], (result) => {
+  if (result.clioUserEmail) {
+    clioUserEmail.textContent = result.clioUserEmail;
+    clioLoginBtn.style.display = 'none';
+    clioLoginStatus.style.display = 'block';
+  }
+});
+
+clioLoginBtn.addEventListener('click', async () => {
+  try {
+    const response = await fetch('http://127.0.0.1:8000/api/clio/auth/');
+    const data = await response.json();
+    // Open Clio auth page in a new window
+    chrome.windows.create({
+      url: data.auth_url,
+      type: 'popup',
+      width: 800,
+      height: 600
+    });
+  } catch (error) {
+    console.error('Error getting Clio auth URL:', error);
+    alert('Failed to start Clio authentication. Please try again.');
+  }
+});
+
+clioLogoutBtn.addEventListener('click', () => {
+  chrome.storage.local.remove(['clioUserEmail'], () => {
+    clioLoginBtn.style.display = 'block';
+    clioLoginStatus.style.display = 'none';
+  });
+});
+
+// Listen for messages from the background script
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'clioAuthSuccess') {
+    const { email } = message;
+    chrome.storage.local.set({ clioUserEmail: email }, () => {
+      clioUserEmail.textContent = email;
+      clioLoginBtn.style.display = 'none';
+      clioLoginStatus.style.display = 'block';
+    });
+  }
+}); 
