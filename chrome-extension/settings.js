@@ -207,7 +207,11 @@ function showNotification(message, type) {
     font-weight: 500;
     z-index: 10000;
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    background: ${type === 'success' ? '#10b981' : '#ef4444'};
+    background: ${
+      type === 'success' ? '#10b981' : 
+      type === 'error' ? '#ef4444' :
+      type === 'info' ? '#3b82f6' : '#6b7280'
+    };
   `;
   notification.textContent = message;
   
@@ -217,7 +221,7 @@ function showNotification(message, type) {
     if (notification.parentNode) {
       notification.parentNode.removeChild(notification);
     }
-  }, 3000);
+  }, 5000);
 } 
 
 // Clio Integration
@@ -225,21 +229,75 @@ const clioLoginBtn = document.getElementById('clioLoginBtn');
 const clioLogoutBtn = document.getElementById('clioLogoutBtn');
 const clioLoginStatus = document.getElementById('clioLoginStatus');
 const clioUserEmail = document.getElementById('clioUserEmail');
+const clioMattersSelect = document.getElementById('clioMatters');
 
 // Check if user is already logged in to Clio
-chrome.storage.local.get(['clioUserEmail'], (result) => {
+chrome.storage.local.get(['clioUserEmail', 'clioAuthTime', 'selectedMatterId'], async (result) => {
   if (result.clioUserEmail) {
+    // Check if auth is still valid
+    const authAge = Date.now() - (result.clioAuthTime || 0);
+    if (authAge > 12 * 60 * 60 * 1000) {
+      // Auth expired, clear data
+      await chrome.storage.local.remove(['clioUserEmail', 'clioAuthTime', 'selectedMatterId']);
+      clioLoginBtn.style.display = 'block';
+      clioLoginStatus.style.display = 'none';
+      clioMattersSelect.style.display = 'none';
+      showNotification('Clio session expired. Please log in again.', 'error');
+      return;
+    }
+    
     clioUserEmail.textContent = result.clioUserEmail;
     clioLoginBtn.style.display = 'none';
     clioLoginStatus.style.display = 'block';
+    
+    // Load matters
+    try {
+      const matters = await fetchClioMatters();
+      populateMattersDropdown(matters, result.selectedMatterId);
+    } catch (error) {
+      console.error('Error loading matters:', error);
+      if (error.message.includes('authentication')) {
+        clioLoginBtn.style.display = 'block';
+        clioLoginStatus.style.display = 'none';
+        clioMattersSelect.style.display = 'none';
+      }
+      showNotification(error.message, 'error');
+    }
   }
 });
 
 clioLoginBtn.addEventListener('click', async () => {
   try {
+    // Show instructions to the user
+    showNotification('Please make sure you are logged out of Clio first', 'info');
+    
+    // Add a temporary logout link
+    const logoutLink = document.createElement('a');
+    logoutLink.href = 'https://app.clio.com/logout';
+    logoutLink.target = '_blank';
+    logoutLink.textContent = 'Click here to logout of Clio first';
+    logoutLink.className = 'clio-logout-link';
+    logoutLink.style.display = 'block';
+    logoutLink.style.marginTop = '10px';
+    logoutLink.style.color = '#2563eb';
+    logoutLink.style.textDecoration = 'underline';
+    
+    clioLoginBtn.parentNode.insertBefore(logoutLink, clioLoginBtn.nextSibling);
+    
+    // Remove the link after 30 seconds
+    setTimeout(() => {
+      if (logoutLink.parentNode) {
+        logoutLink.parentNode.removeChild(logoutLink);
+      }
+    }, 30000);
+    
+    // Clear any existing auth data
+    await chrome.storage.local.remove(['clioUserEmail', 'clioAuthTime', 'selectedMatterId']);
+    
     const response = await fetch('http://127.0.0.1:8000/api/clio/auth/');
     const data = await response.json();
-    // Open Clio auth page in a new window
+    
+    // Open in a popup window
     chrome.windows.create({
       url: data.auth_url,
       type: 'popup',
@@ -247,26 +305,69 @@ clioLoginBtn.addEventListener('click', async () => {
       height: 600
     });
   } catch (error) {
-    console.error('Error getting Clio auth URL:', error);
-    alert('Failed to start Clio authentication. Please try again.');
+    console.error('Error starting Clio auth:', error);
+    showNotification('Failed to start Clio authentication', 'error');
   }
 });
 
 clioLogoutBtn.addEventListener('click', () => {
-  chrome.storage.local.remove(['clioUserEmail'], () => {
+  chrome.storage.local.remove(['clioUserEmail', 'clioAuthTime', 'selectedMatterId'], () => {
     clioLoginBtn.style.display = 'block';
     clioLoginStatus.style.display = 'none';
+    clioMattersSelect.innerHTML = '';
+    clioMattersSelect.style.display = 'none';
+    showNotification('Logged out of Clio successfully', 'success');
   });
 });
+
+// Handle matter selection
+clioMattersSelect.addEventListener('change', (event) => {
+  const matterId = event.target.value;
+  chrome.storage.local.set({ selectedMatterId: matterId });
+  showNotification('Matter selection saved', 'success');
+});
+
+// Populate matters dropdown
+function populateMattersDropdown(matters, selectedMatterId) {
+  clioMattersSelect.innerHTML = '<option value="">Select a matter...</option>';
+  
+  matters.forEach(matter => {
+    const option = document.createElement('option');
+    option.value = matter.id;
+    option.textContent = matter.display_number ? 
+      `${matter.display_number} - ${matter.description}` : 
+      matter.description;
+    
+    if (matter.id === selectedMatterId) {
+      option.selected = true;
+    }
+    
+    clioMattersSelect.appendChild(option);
+  });
+  
+  clioMattersSelect.style.display = 'block';
+}
 
 // Listen for messages from the background script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'clioAuthSuccess') {
     const { email } = message;
-    chrome.storage.local.set({ clioUserEmail: email }, () => {
+    chrome.storage.local.set({ 
+      clioUserEmail: email,
+      clioAuthTime: Date.now()
+    }, async () => {
       clioUserEmail.textContent = email;
       clioLoginBtn.style.display = 'none';
       clioLoginStatus.style.display = 'block';
+      
+      // Load matters after successful login
+      try {
+        const matters = await fetchClioMatters();
+        populateMattersDropdown(matters);
+      } catch (error) {
+        console.error('Error loading matters:', error);
+        showNotification('Failed to load matters', 'error');
+      }
     });
   }
 }); 

@@ -20,66 +20,140 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ success: false, error: error.message });
       });
     
-    // Return true to indicate we'll send a response asynchronously
     return true;
   }
   
-  // Always return true for async response
   return true;
 });
 
-// Handle Clio OAuth callback
+// Handle Clio OAuth callback with improved error handling
 chrome.webNavigation.onCompleted.addListener(async (details) => {
   if (details.url.includes('http://127.0.0.1:8000/api/clio/callback/')) {
-    const url = new URL(details.url);
-    const code = url.searchParams.get('code');
-    
-    if (code) {
-      try {
-        const response = await fetch(`http://127.0.0.1:8000/api/clio/callback/?code=${code}`);
-        const data = await response.json();
+    try {
+      // Get the response directly from the page
+      const response = await fetch(details.url);
+      const data = await response.json();
+      
+      if (data.status === 'success' && data.email) {
+        // Store user email and auth time
+        await chrome.storage.local.set({ 
+          clioUserEmail: data.email,
+          clioAuthTime: Date.now() // Store auth time to track session
+        });
         
-        // Notify settings page about successful auth
+        // Notify settings page
         chrome.runtime.sendMessage({
           action: 'clioAuthSuccess',
           email: data.email
         });
         
-        // Close the auth window
+        // Show success notification
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: 'icons/icon128.png',
+          title: 'Clio Login Successful',
+          message: `Logged in as ${data.email}`
+        });
+
+        // Only close the tab on successful authentication
         chrome.tabs.remove(details.tabId);
-      } catch (error) {
-        console.error('Error completing Clio authentication:', error);
+      } else {
+        // Don't close the tab, show error in the page
+        chrome.tabs.sendMessage(details.tabId, {
+          action: 'showAuthError',
+          error: data.error || 'Authentication failed'
+        });
+        
+        // Show error notification
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: 'icons/icon128.png',
+          title: 'Clio Login Failed',
+          message: data.error || 'Authentication failed. Please try logging out of Clio and try again.'
+        });
       }
+    } catch (error) {
+      console.error('Error completing Clio authentication:', error);
+      
+      // Show error notification
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title: 'Clio Login Failed',
+        message: 'Please try logging out of Clio at app.clio.com first, then try again.'
+      });
+      
+      // Don't close the tab on error
+      chrome.tabs.sendMessage(details.tabId, {
+        action: 'showAuthError',
+        error: error.message
+      });
     }
   }
 });
 
-// Fetch Clio matters
+// Add function to check auth status
+async function checkClioAuthStatus() {
+  const { clioUserEmail, clioAuthTime } = await chrome.storage.local.get(['clioUserEmail', 'clioAuthTime']);
+  
+  if (!clioUserEmail) return false;
+  
+  // Check if auth is older than 12 hours
+  const authAge = Date.now() - (clioAuthTime || 0);
+  if (authAge > 12 * 60 * 60 * 1000) {
+    // Clear expired auth
+    await chrome.storage.local.remove(['clioUserEmail', 'clioAuthTime', 'selectedMatterId']);
+    return false;
+  }
+  
+  return true;
+}
+
+// Update fetchClioMatters with improved error handling
 async function fetchClioMatters() {
   try {
-    const { clioUserEmail } = await chrome.storage.local.get(['clioUserEmail']);
-    if (!clioUserEmail) {
-      throw new Error('User not logged in to Clio');
+    const isAuthed = await checkClioAuthStatus();
+    if (!isAuthed) {
+      throw new Error('Clio authentication expired. Please log in again.');
     }
     
+    const { clioUserEmail } = await chrome.storage.local.get(['clioUserEmail']);
     const response = await fetch(`http://127.0.0.1:8000/api/clio/matters/?email=${encodeURIComponent(clioUserEmail)}`);
+    
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to fetch matters');
+    }
+    
     const data = await response.json();
     return data.matters;
   } catch (error) {
     console.error('Error fetching Clio matters:', error);
+    // If auth error, clear stored data
+    if (error.message.includes('authentication')) {
+      await chrome.storage.local.remove(['clioUserEmail', 'clioAuthTime', 'selectedMatterId']);
+    }
     throw error;
   }
 }
 
-// Update analyzeEmail function to handle Clio integration
+// Update analyzeEmail function to check auth status
 async function analyzeEmail(emailData) {
   try {
     const API_URL = 'http://127.0.0.1:8000/api/summarize-email/';
     
-    // Add Clio user email if available
-    const { clioUserEmail } = await chrome.storage.local.get(['clioUserEmail']);
+    // Check auth status before proceeding
+    const isAuthed = await checkClioAuthStatus();
+    if (!isAuthed) {
+      throw new Error('Clio authentication expired. Please log in again.');
+    }
+    
+    // Get Clio user email and selected matter ID
+    const { clioUserEmail, selectedMatterId } = await chrome.storage.local.get(['clioUserEmail', 'selectedMatterId']);
+    
     if (clioUserEmail) {
       emailData.sender_email = clioUserEmail;
+      emailData.matter_id = selectedMatterId;
     }
     
     console.log('🔧 DEBUG: Preparing API request');
@@ -167,7 +241,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     fetchClioMatters()
       .then(matters => sendResponse({ success: true, matters }))
       .catch(error => sendResponse({ success: false, error: error.message }));
-    return true; // Keep the message channel open for async response
+    return true;
   }
 });
 
