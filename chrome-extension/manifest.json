@@ -8,7 +8,8 @@
     "activeTab",
     "tabs",
     "webNavigation",
-    "notifications"
+    "notifications",
+    "scripting"
   ],
   "host_permissions": [
     "http://127.0.0.1:8000/*",
@@ -43,8 +44,8 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["auth-error.html"],
-      "matches": ["http://127.0.0.1:8000/*"]
+      "resources": ["auth-error.html", "auth-success.html", "auth-success.js"],
+      "matches": ["http://127.0.0.1:8000/*", "https://*/*"]
     }
   ]
 } 

@@ -6,8 +6,41 @@ class EmailAnalyzer {
     this.lastAnalyzedEmail = null;
     this.matterSelectContainer = null;
     this.matters = [];
-    this.loadClioMatters();
+    this.clioUserEmail = null;
+    this.selectedMatterId = null;
+    this.initializeClioData();
     this.init();
+  }
+
+  async initializeClioData() {
+    try {
+      const data = await new Promise(resolve => {
+        chrome.storage.local.get(['clioUserEmail', 'clioMatters', 'isClioAuthenticated'], resolve);
+      });
+      
+      if (data.isClioAuthenticated && data.clioUserEmail) {
+        this.clioUserEmail = data.clioUserEmail;
+        this.matters = data.clioMatters || [];
+        console.log('🔧 DEBUG: Initialized Clio data:', {
+          email: this.clioUserEmail,
+          mattersCount: this.matters.length,
+          isAuthenticated: true
+        });
+        
+        // If no matters loaded, try to fetch them
+        if (!this.matters.length) {
+          await this.loadClioMatters();
+        }
+      } else {
+        this.clioUserEmail = null;
+        this.matters = [];
+        console.log('🔧 DEBUG: Not authenticated with Clio');
+      }
+    } catch (error) {
+      console.error('Error initializing Clio data:', error);
+      this.clioUserEmail = null;
+      this.matters = [];
+    }
   }
 
   init() {
@@ -18,6 +51,11 @@ class EmailAnalyzer {
     } else if (this.isOutlook) {
       this.initOutlookMonitoring();
     }
+
+    // Refresh Clio data every 5 minutes
+    setInterval(() => {
+      this.initializeClioData();
+    }, 5 * 60 * 1000);
   }
 
   initGmailMonitoring() {
@@ -77,17 +115,30 @@ class EmailAnalyzer {
   // Load Clio matters
   async loadClioMatters() {
     try {
-      const { clioUserEmail } = await new Promise(resolve => {
-        chrome.storage.local.get(['clioUserEmail'], resolve);
+      // First check if we have matters in storage
+      const data = await new Promise(resolve => {
+        chrome.storage.local.get(['clioUserEmail', 'clioMatters'], resolve);
       });
       
-      if (clioUserEmail) {
-        const response = await new Promise(resolve => {
-          chrome.runtime.sendMessage({ action: 'fetchClioMatters' }, resolve);
-        });
-        
-        if (response.success) {
-          this.matters = response.matters;
+      if (data.clioMatters && data.clioMatters.length > 0) {
+        this.matters = data.clioMatters;
+        console.log('🔧 DEBUG: Loaded matters from storage:', this.matters.length);
+        return;
+      }
+      
+      if (data.clioUserEmail) {
+        // Fetch from API if not in storage
+        const response = await fetch(`http://127.0.0.1:8000/api/clio/matters/?email=${encodeURIComponent(data.clioUserEmail)}`);
+        if (response.ok) {
+          const mattersData = await response.json();
+          this.matters = mattersData.matters;
+          
+          // Store for future use
+          await chrome.storage.local.set({
+            clioMatters: mattersData.matters
+          });
+          
+          console.log('🔧 DEBUG: Fetched and stored matters:', this.matters.length);
         }
       }
     } catch (error) {
@@ -96,65 +147,99 @@ class EmailAnalyzer {
   }
 
   // Create matter selection UI
-  createMatterSelect() {
-    if (!this.matterSelectContainer) {
-      this.matterSelectContainer = document.createElement('div');
-      this.matterSelectContainer.className = 'involex-matter-select';
-      this.matterSelectContainer.style.cssText = `
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        background: white;
-        padding: 20px;
-        border-radius: 8px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        z-index: 9999;
-        display: none;
-      `;
-      
-      const content = `
-        <h3 style="margin: 0 0 15px">Select Clio Matter</h3>
+  async createMatterSelect() {
+    // Remove existing container if it exists
+    if (this.matterSelectContainer) {
+      this.matterSelectContainer.remove();
+    }
+
+    // Create new container
+    this.matterSelectContainer = document.createElement('div');
+    this.matterSelectContainer.className = 'involex-matter-select';
+    this.matterSelectContainer.style.cssText = `
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      z-index: 9999;
+      display: none;
+      min-width: 300px;
+    `;
+    
+    // Ensure we have matters loaded
+    if (!this.matters.length) {
+      await this.loadClioMatters();
+    }
+    
+    const content = `
+      <h3 style="margin: 0 0 15px">Select Clio Matter</h3>
+      ${this.matters.length ? `
         <select id="clioMatterSelect" style="width: 100%; padding: 8px; margin-bottom: 15px">
           <option value="">Select a matter...</option>
           ${this.matters.map(matter => 
             `<option value="${matter.id}">${matter.display_number} - ${matter.description}</option>`
           ).join('')}
         </select>
-        <div style="display: flex; justify-content: flex-end; gap: 10px;">
-          <button id="cancelMatterSelect" style="padding: 8px 16px">Cancel</button>
-          <button id="confirmMatterSelect" style="padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px">Confirm</button>
-        </div>
-      `;
-      
-      this.matterSelectContainer.innerHTML = content;
-      document.body.appendChild(this.matterSelectContainer);
-      
-      // Add event listeners
-      document.getElementById('cancelMatterSelect').addEventListener('click', () => {
-        this.matterSelectContainer.style.display = 'none';
-      });
-    }
+      ` : '<p style="color: red; margin-bottom: 15px">No matters found. Please check your Clio connection.</p>'}
+      <div style="display: flex; justify-content: flex-end; gap: 10px;">
+        <button id="cancelMatterSelect" style="padding: 8px 16px; border: 1px solid #ccc; background: white; border-radius: 4px">Cancel</button>
+        <button id="confirmMatterSelect" style="padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px" ${!this.matters.length ? 'disabled' : ''}>Confirm</button>
+      </div>
+    `;
+    
+    this.matterSelectContainer.innerHTML = content;
+    document.body.appendChild(this.matterSelectContainer);
+    
+    // Add event listeners
+    document.getElementById('cancelMatterSelect').addEventListener('click', () => {
+      this.matterSelectContainer.style.display = 'none';
+    });
+    
     return this.matterSelectContainer;
   }
 
   // Show matter selection dialog
   async showMatterSelect() {
-    return new Promise((resolve) => {
-      const container = this.createMatterSelect();
+    return new Promise(async (resolve) => {
+      const container = await this.createMatterSelect();
       container.style.display = 'block';
       
       const select = document.getElementById('clioMatterSelect');
       const confirmBtn = document.getElementById('confirmMatterSelect');
       
       const handleConfirm = () => {
-        const matterId = select.value;
+        const matterId = select ? select.value : '';
         container.style.display = 'none';
-        confirmBtn.removeEventListener('click', handleConfirm);
+        if (confirmBtn) {
+          confirmBtn.removeEventListener('click', handleConfirm);
+        }
         resolve(matterId);
       };
       
-      confirmBtn.addEventListener('click', handleConfirm);
+      const handleCancel = () => {
+        container.style.display = 'none';
+        const cancelBtn = document.getElementById('cancelMatterSelect');
+        if (cancelBtn) {
+          cancelBtn.removeEventListener('click', handleCancel);
+        }
+        if (confirmBtn) {
+          confirmBtn.removeEventListener('click', handleConfirm);
+        }
+        resolve('');
+      };
+      
+      if (confirmBtn) {
+        confirmBtn.addEventListener('click', handleConfirm);
+      }
+      
+      const cancelBtn = document.getElementById('cancelMatterSelect');
+      if (cancelBtn) {
+        cancelBtn.addEventListener('click', handleCancel);
+      }
     });
   }
 
@@ -164,56 +249,126 @@ class EmailAnalyzer {
     if (sendButton && !sendButton.hasAttribute('data-involex-monitored')) {
       sendButton.setAttribute('data-involex-monitored', 'true');
       
-      sendButton.addEventListener('click', async (e) => {
+      const handleSendClick = async (e) => {
+        // Prevent the default send action
         e.preventDefault();
         e.stopPropagation();
         
         console.log('🔧 DEBUG: Send button clicked');
         
-        try {
-          const emailData = this.extractGmailData(composeWindow);
-          console.log('🔧 DEBUG: Extracted email data:', {
-            hasContent: !!emailData?.email_content,
-            contentLength: emailData?.email_content?.length,
-            recipient: emailData?.recipient_email,
-            sender: emailData?.sender_email,
-            subject: emailData?.subject
-          });
+        // Check extension context first
+        if (!chrome.runtime?.id) {
+          console.error('❌ Extension context invalid - proceeding with normal send');
+          this.proceedWithSend(sendButton, handleSendClick);
+          return;
+        }
+        
+        const emailData = this.extractGmailData(composeWindow);
+        console.log('🔧 DEBUG: Extracted email data:', {
+          hasContent: !!emailData?.email_content,
+          contentLength: emailData?.email_content?.length,
+          recipient: emailData?.recipient_email,
+          sender: emailData?.sender_email,
+          subject: emailData?.subject
+        });
+        
+        if (emailData && this.isValidEmail(emailData)) {
+          // Use instance variables instead of storage calls
+          if (!this.clioUserEmail) {
+            console.error('❌ Not authenticated with Clio. Please login first.');
+            this.showErrorNotification('Please login to Clio first');
+            this.proceedWithSend(sendButton, handleSendClick);
+            return;
+          }
+
+          // Override sender email
+          emailData.sender_email = this.clioUserEmail;
           
-          if (emailData && this.isValidEmail(emailData)) {
-            const { clioUserEmail } = await new Promise(resolve => {
-              chrome.storage.local.get(['clioUserEmail'], resolve);
-            });
-            
-            if (clioUserEmail) {
-              const matterId = await this.showMatterSelect();
-              if (matterId) {
-                emailData.matter_id = matterId;
-              }
+          // Always require matter selection for each email
+          try {
+            const matterId = await this.showMatterSelect();
+            if (!matterId) {
+              console.error('❌ No matter selected');
+              this.showErrorNotification('Please select a matter');
+              return;
             }
+            emailData.matter_id = matterId;
+            this.selectedMatterId = matterId; // Store for reference
+
+            console.log('🔧 DEBUG: Using Clio credentials:', {
+              email: this.clioUserEmail,
+              matterId: matterId
+            });
             
             const emailKey = this.generateEmailKey(emailData);
             if (emailKey !== this.lastAnalyzedEmail) {
               this.lastAnalyzedEmail = emailKey;
-              await this.sendToAPI(emailData);
+              
+              // Use Promise for API call
+              try {
+                await Promise.race([
+                  this.sendToAPI(emailData),
+                  new Promise((_, reject) => setTimeout(() => reject(new Error('API timeout')), 10000))
+                ]);
+                console.log('✅ API call successful, proceeding with send');
+                this.proceedWithSend(sendButton, handleSendClick);
+              } catch (error) {
+                console.error('❌ API call failed:', error);
+                this.proceedWithSend(sendButton, handleSendClick);
+              }
             } else {
-              console.log('🔧 DEBUG: Skipping duplicate email analysis');
+              console.log('🔧 DEBUG: Skipping duplicate analysis');
+              this.proceedWithSend(sendButton, handleSendClick);
             }
-          } else {
-            console.log('🔧 DEBUG: Invalid email data, not sending to API');
+          } catch (error) {
+            console.error('❌ Error in matter selection:', error);
+            this.showErrorNotification('Error selecting matter: ' + error.message);
+            this.proceedWithSend(sendButton, handleSendClick);
           }
-          
-          // Trigger the original send button click
+        } else {
+          console.log('🔧 DEBUG: Invalid email data');
+          this.proceedWithSend(sendButton, handleSendClick);
+        }
+      };
+      
+      // Add the event listener
+      sendButton.addEventListener('click', handleSendClick);
+    }
+  }
+
+  proceedWithSend(sendButton, eventHandler) {
+    try {
+      // Clean up event listener
+      sendButton.removeEventListener('click', eventHandler);
+      
+      // Try to find the Gmail send button
+      const realSendButton = sendButton.closest('[role="dialog"]').querySelector('[data-tooltip="Send ‪(Ctrl+Enter)‬"], [data-tooltip="Send"]');
+      if (realSendButton) {
+        realSendButton.click();
+      } else {
+        // Fallback to form submission
+        const form = sendButton.closest('form');
+        if (form) {
+          form.submit();
+        } else {
+          // Last resort: dispatch native click event
           const nativeEvent = new MouseEvent('click', {
             bubbles: true,
             cancelable: true,
             view: window
           });
           sendButton.dispatchEvent(nativeEvent);
-        } catch (error) {
-          console.error('🔧 DEBUG: Error in send button handler:', error);
         }
+      }
+    } catch (error) {
+      console.error('Error sending email:', error);
+      // Last resort: dispatch native click event
+      const nativeEvent = new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        view: window
       });
+      sendButton.dispatchEvent(nativeEvent);
     }
   }
 
@@ -491,7 +646,8 @@ class EmailAnalyzer {
         content_length: emailData.email_content?.length,
         sender: emailData.sender_email,
         recipient: emailData.recipient_email,
-        subject_length: emailData.subject?.length
+        subject_length: emailData.subject?.length,
+        matter_id: emailData.matter_id
       });
       
       // Validate data before sending
@@ -507,51 +663,33 @@ class EmailAnalyzer {
       if (!emailData.subject) {
         throw new Error('Subject is missing');
       }
-      
-      // Check if extension context is valid
-      if (!chrome.runtime?.id) {
-        console.error('❌ Extension context invalidated - please reload extension');
-        this.showErrorNotification('Extension needs to be reloaded. Please refresh the page.');
-        return;
+      if (!emailData.matter_id) {
+        throw new Error('Matter ID is missing');
       }
       
-      console.log('🔧 DEBUG: Sending message to background script...');
-      
-      // Send to background script with Promise wrapper
-      const response = await new Promise((resolve, reject) => {
+      // Use background script for API call to avoid CORS issues
+      return new Promise((resolve, reject) => {
         chrome.runtime.sendMessage({
           action: 'analyzeEmail',
           data: emailData
         }, (response) => {
-          // Check for chrome.runtime.lastError
           if (chrome.runtime.lastError) {
-            console.error('❌ Chrome runtime error:', chrome.runtime.lastError);
-            reject(chrome.runtime.lastError);
+            reject(new Error(chrome.runtime.lastError.message));
             return;
           }
-          resolve(response);
+          
+          if (response && response.success) {
+            console.log('✅ Email analysis completed:', response.result);
+            this.showAnalysisResult(response.result);
+            resolve(response.result);
+          } else {
+            reject(new Error(response?.error || 'API request failed'));
+          }
         });
-        
-        // Set a timeout to detect if the background script doesn't respond
-        setTimeout(() => {
-          reject(new Error('Background script did not respond in time'));
-        }, 30000); // 30 second timeout
       });
-      
-      console.log('🔧 DEBUG: Background script response:', response);
-      
-      if (response && response.success) {
-        console.log('✅ Email analysis completed:', response.result);
-        this.showAnalysisResult(response.result);
-      } else {
-        console.error('❌ Email analysis failed:', response?.error);
-        this.showErrorNotification(response?.error || 'API request failed');
-      }
     } catch (error) {
       console.error('❌ DEBUG: Error in sendToAPI:', error);
       this.showErrorNotification('Extension error: ' + error.message);
-      
-      // Re-throw error for upstream handling
       throw error;
     }
   }

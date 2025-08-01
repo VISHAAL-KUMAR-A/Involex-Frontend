@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Involex - Clio Authentication</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .container {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 40px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+        }
+        .icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+        .success {
+            color: #4CAF50;
+        }
+        .error {
+            color: #f44336;
+        }
+        h1 {
+            margin: 0 0 15px 0;
+            font-size: 28px;
+        }
+        p {
+            margin: 10px 0;
+            font-size: 16px;
+            opacity: 0.9;
+        }
+        .close-info {
+            margin-top: 20px;
+            font-size: 14px;
+            opacity: 0.7;
+        }
+        .retry-btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: background 0.3s;
+        }
+        .retry-btn:hover {
+            background: #45a049;
+        }
+        .error .retry-btn {
+            background: #f44336;
+        }
+        .error .retry-btn:hover {
+            background: #da190b;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="success-content" style="display: none;">
+            <div class="icon success">✅</div>
+            <h1>Authentication Successful!</h1>
+            <p>You have successfully logged into Clio.</p>
+            <p id="user-email"></p>
+            <div class="close-info">This tab will close automatically in a few seconds.</div>
+        </div>
+        
+        <div id="error-content" style="display: none;">
+            <div class="icon error">❌</div>
+            <h1>Authentication Failed</h1>
+            <p id="error-message">There was an error during authentication.</p>
+            <p>Please try logging out of Clio first, then try again.</p>
+            <button class="retry-btn" id="close-btn">Close</button>
+        </div>
+        
+        <div id="loading-content">
+            <div class="icon">⏳</div>
+            <h1>Processing Authentication...</h1>
+            <p>Please wait while we complete your Clio login.</p>
+        </div>
+    </div>
+
+    <script src="auth-success.js"></script>
+</body>
+</html>
