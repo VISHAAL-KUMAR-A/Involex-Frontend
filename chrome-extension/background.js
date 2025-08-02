@@ -288,8 +288,19 @@ async function fetchClioMatters() {
     const response = await fetch(`http://127.0.0.1:8000/api/clio/matters/?email=${encodeURIComponent(clioUserEmail)}`);
     
     if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.error || 'Failed to fetch matters');
+      let errorMessage = 'Failed to fetch matters';
+      try {
+        const data = await response.json();
+        errorMessage = data.error || data.detail || `HTTP ${response.status}`;
+        
+        // Check for specific backend errors that might indicate server needs restart
+        if (errorMessage.includes('region') || errorMessage.includes('ClioUser')) {
+          errorMessage = 'Backend server needs restart. Please ask your backend developer to restart the Django server.';
+        }
+      } catch (e) {
+        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+      }
+      throw new Error(errorMessage);
     }
     
     const data = await response.json();
@@ -321,6 +332,13 @@ async function analyzeEmail(emailData) {
     if (clioUserEmail) {
       emailData.sender_email = clioUserEmail;
       emailData.matter_id = selectedMatterId;
+    }
+    
+    // Log helpful info if no matter selected
+    if (!selectedMatterId) {
+      console.log('🔧 DEBUG: No matter selected - email will be analyzed without matter association');
+      // Remove matter_id if not set to avoid backend validation errors
+      delete emailData.matter_id;
     }
     
     console.log('🔧 DEBUG: Preparing API request');

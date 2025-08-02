@@ -44,12 +44,19 @@ class EmailAnalyzer {
   }
 
   init() {
-    console.log('Involex Email Analyzer initialized');
+    console.log('🔧 DEBUG: Involex Email Analyzer initialized');
+    console.log('🔧 DEBUG: Current URL:', window.location.href);
+    console.log('🔧 DEBUG: Is Gmail:', this.isGmail);
+    console.log('🔧 DEBUG: Is Outlook:', this.isOutlook);
     
     if (this.isGmail) {
+      console.log('🔧 DEBUG: Starting Gmail monitoring...');
       this.initGmailMonitoring();
     } else if (this.isOutlook) {
+      console.log('🔧 DEBUG: Starting Outlook monitoring...');
       this.initOutlookMonitoring();
+    } else {
+      console.log('❌ DEBUG: Not on supported email platform');
     }
 
     // Refresh Clio data every 5 minutes
@@ -387,18 +394,35 @@ class EmailAnalyzer {
   }
 
   monitorGmailSendButton() {
+    console.log('🔧 DEBUG: Setting up Gmail send button monitoring...');
+    
     document.addEventListener('click', (e) => {
       const target = e.target;
       
-      // Check if clicked element is a send button
-      if (target.matches('[data-tooltip*="Send"], [aria-label*="Send"]') || 
-          target.closest('[data-tooltip*="Send"], [aria-label*="Send"]')) {
-        
-        const composeWindow = target.closest('[role="dialog"]');
+      // Log all clicks for debugging
+      console.log('🔧 DEBUG: Click detected on element:', {
+        tagName: target.tagName,
+        className: target.className,
+        id: target.id,
+        dataTooltip: target.getAttribute('data-tooltip'),
+        ariaLabel: target.getAttribute('aria-label'),
+        textContent: target.textContent?.trim().substring(0, 50)
+      });
+      
+      // Check if clicked element is a send button - expanded selectors
+      const isSendButton = target.matches('[data-tooltip*="Send"], [aria-label*="Send"], [jsaction*="send"], .T-I-atl') || 
+                          target.closest('[data-tooltip*="Send"], [aria-label*="Send"], [jsaction*="send"], .T-I-atl');
+      
+      if (isSendButton) {
+        console.log('✅ DEBUG: Gmail send button clicked!');
+        const composeWindow = target.closest('[role="dialog"], .nH.if');
         if (composeWindow) {
+          console.log('🔧 DEBUG: Found compose window, scheduling analysis...');
           setTimeout(() => {
             this.analyzeGmailEmail(composeWindow);
           }, 500);
+        } else {
+          console.log('❌ DEBUG: No compose window found');
         }
       }
     });
@@ -423,18 +447,33 @@ class EmailAnalyzer {
 
   async analyzeGmailEmail(composeWindow) {
     try {
+      console.log('🔧 DEBUG: Starting Gmail email analysis');
       const emailData = this.extractGmailData(composeWindow);
       
-      if (emailData && this.isValidEmail(emailData)) {
+      if (!emailData) {
+        console.log('❌ DEBUG: No email data extracted');
+        return;
+      }
+      
+      console.log('🔧 DEBUG: Email data extracted successfully');
+      
+      if (this.isValidEmail(emailData)) {
+        console.log('✅ DEBUG: Email validation passed');
         const emailKey = this.generateEmailKey(emailData);
         
         if (emailKey !== this.lastAnalyzedEmail) {
+          console.log('🔧 DEBUG: New email detected, sending to API...');
           this.lastAnalyzedEmail = emailKey;
           await this.sendToAPI(emailData);
+        } else {
+          console.log('🔧 DEBUG: Email already analyzed, skipping');
         }
+      } else {
+        console.log('❌ DEBUG: Email validation failed');
       }
     } catch (error) {
-      console.error('Error analyzing Gmail email:', error);
+      console.error('❌ DEBUG: Error analyzing Gmail email:', error);
+      this.showErrorNotification('Email analysis failed: ' + error.message);
     }
   }
 
@@ -642,12 +681,19 @@ class EmailAnalyzer {
 
   async sendToAPI(emailData) {
     try {
+      // Get selected matter before sending
+      const storage = await new Promise(resolve => {
+        chrome.storage.local.get(['selectedMatterId', 'clioUserEmail'], resolve);
+      });
+      
       console.log('🔧 DEBUG: Preparing to send email data:', {
         content_length: emailData.email_content?.length,
         sender: emailData.sender_email,
         recipient: emailData.recipient_email,
         subject_length: emailData.subject?.length,
-        matter_id: emailData.matter_id
+        matter_id: emailData.matter_id,
+        selected_matter_from_storage: storage.selectedMatterId,
+        clio_user: storage.clioUserEmail
       });
       
       // Validate data before sending
@@ -663,9 +709,7 @@ class EmailAnalyzer {
       if (!emailData.subject) {
         throw new Error('Subject is missing');
       }
-      if (!emailData.matter_id) {
-        throw new Error('Matter ID is missing');
-      }
+      // Note: matter_id will be set by the background script based on selected matter
       
       // Use background script for API call to avoid CORS issues
       return new Promise((resolve, reject) => {

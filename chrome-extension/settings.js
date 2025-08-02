@@ -260,6 +260,11 @@ chrome.storage.local.get(['clioUserEmail', 'clioAuthTime', 'selectedMatterId'], 
         clioLoginBtn.style.display = 'block';
         clioLoginStatus.style.display = 'none';
         clioMattersSelect.style.display = 'none';
+      } else {
+        // Show error but keep user logged in - they can still use email analysis
+        console.log('🔧 DEBUG: Matters loading failed, but user remains authenticated');
+        clioMattersSelect.innerHTML = '<option value="">Unable to load matters - Email analysis still works</option>';
+        clioMattersSelect.style.display = 'block';
       }
       showNotification(error.message, 'error');
     }
@@ -348,6 +353,24 @@ function populateMattersDropdown(matters, selectedMatterId) {
   clioMattersSelect.style.display = 'block';
 }
 
+// Function to fetch Clio matters using message passing
+async function fetchClioMatters() {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ action: 'fetchClioMatters' }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      
+      if (response.success) {
+        resolve(response.matters);
+      } else {
+        reject(new Error(response.error || 'Failed to fetch matters'));
+      }
+    });
+  });
+}
+
 // Listen for messages from the background script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'clioAuthSuccess') {
@@ -366,7 +389,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         populateMattersDropdown(matters);
       } catch (error) {
         console.error('Error loading matters:', error);
-        showNotification('Failed to load matters', 'error');
+        // Show error but keep user logged in - they can still use email analysis
+        clioMattersSelect.innerHTML = '<option value="">Unable to load matters - Email analysis still works</option>';
+        clioMattersSelect.style.display = 'block';
+        showNotification('Failed to load matters - Email analysis still available', 'error');
       }
     });
   }
