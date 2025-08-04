@@ -52,6 +52,9 @@ class EmailAnalyzer {
     if (this.isGmail) {
       console.log('🔧 DEBUG: Starting Gmail monitoring...');
       this.initGmailMonitoring();
+      
+      // Add a test button for debugging
+      this.addTestButton();
     } else if (this.isOutlook) {
       console.log('🔧 DEBUG: Starting Outlook monitoring...');
       this.initOutlookMonitoring();
@@ -63,6 +66,58 @@ class EmailAnalyzer {
     setInterval(() => {
       this.initializeClioData();
     }, 5 * 60 * 1000);
+  }
+
+  // Add a test button for debugging email analysis
+  addTestButton() {
+    const testButton = document.createElement('button');
+    testButton.textContent = '🧪 Test Email Analysis';
+    testButton.style.cssText = `
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 10000;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      padding: 10px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 12px;
+    `;
+    
+    testButton.addEventListener('click', () => {
+      console.log('🧪 DEBUG: Test button clicked - running email analysis test');
+      this.testEmailAnalysis();
+    });
+    
+    document.body.appendChild(testButton);
+    console.log('🧪 DEBUG: Test button added to page');
+  }
+
+  // Test email analysis with dummy data
+  async testEmailAnalysis() {
+    console.log('🧪 DEBUG: Starting test email analysis...');
+    
+    const testEmailData = {
+      email_content: "This is a test email to verify the email analysis functionality is working properly. The content should be long enough to pass validation.",
+      sender_email: this.clioUserEmail || "test@example.com",
+      recipient_email: "recipient@example.com", 
+      subject: "Test Email Analysis"
+    };
+    
+    console.log('🧪 DEBUG: Test email data:', testEmailData);
+    
+    try {
+      if (this.isValidEmail(testEmailData)) {
+        console.log('✅ DEBUG: Test email validation passed');
+        await this.sendToAPI(testEmailData);
+      } else {
+        console.log('❌ DEBUG: Test email validation failed');
+      }
+    } catch (error) {
+      console.error('❌ DEBUG: Test email analysis failed:', error);
+    }
   }
 
   initGmailMonitoring() {
@@ -291,14 +346,19 @@ class EmailAnalyzer {
           // Override sender email
           emailData.sender_email = this.clioUserEmail;
           
-          // Always require matter selection for each email
+          // Get the matter from storage (selected in settings)
           try {
-            const matterId = await this.showMatterSelect();
+            const storage = await new Promise(resolve => {
+              chrome.storage.local.get(['selectedMatterId'], resolve);
+            });
+            
+            const matterId = storage.selectedMatterId;
             if (!matterId) {
-              console.error('❌ No matter selected');
-              this.showErrorNotification('Please select a matter');
+              console.error('❌ No matter selected in settings');
+              this.showErrorNotification('Please select a matter in extension settings first');
               return;
             }
+            
             emailData.matter_id = matterId;
             this.selectedMatterId = matterId; // Store for reference
 
@@ -399,30 +459,111 @@ class EmailAnalyzer {
     document.addEventListener('click', (e) => {
       const target = e.target;
       
-      // Log all clicks for debugging
-      console.log('🔧 DEBUG: Click detected on element:', {
-        tagName: target.tagName,
-        className: target.className,
-        id: target.id,
-        dataTooltip: target.getAttribute('data-tooltip'),
-        ariaLabel: target.getAttribute('aria-label'),
-        textContent: target.textContent?.trim().substring(0, 50)
-      });
+      // Only log clicks on buttons and divs to reduce noise
+      if (target.tagName === 'BUTTON' || target.tagName === 'DIV' || target.getAttribute('role') === 'button') {
+        console.log('🔧 DEBUG: Click detected on button/div:', {
+          tagName: target.tagName,
+          className: target.className,
+          id: target.id,
+          dataTooltip: target.getAttribute('data-tooltip'),
+          ariaLabel: target.getAttribute('aria-label'),
+          textContent: target.textContent?.trim().substring(0, 50),
+          jsaction: target.getAttribute('jsaction')
+        });
+      }
       
-      // Check if clicked element is a send button - expanded selectors
-      const isSendButton = target.matches('[data-tooltip*="Send"], [aria-label*="Send"], [jsaction*="send"], .T-I-atl') || 
-                          target.closest('[data-tooltip*="Send"], [aria-label*="Send"], [jsaction*="send"], .T-I-atl');
+      // Updated Gmail send button detection with more selectors
+      const sendButtonSelectors = [
+        // Common Gmail send button selectors
+        '[data-tooltip*="Send"]',
+        '[aria-label*="Send"]', 
+        '[jsaction*="send"]',
+        '.T-I-atl',
+        // Updated selectors for newer Gmail
+        'div[role="button"][aria-label*="Send"]',
+        'div[data-tooltip*="Send"]',
+        'div[jscontroller*=""][aria-label*="Send"]',
+        // Text-based detection
+        'div[role="button"]:has-text("Send")',
+        'button:has-text("Send")',
+        // Tab-based send
+        '[data-tab="Send"]',
+        // Keyboard shortcut related
+        '[data-hotkey="ctrl+enter"]'
+      ];
+      
+      let isSendButton = false;
+      let matchedSelector = '';
+      
+      // Check direct match
+      for (const selector of sendButtonSelectors) {
+        try {
+          if (target.matches(selector)) {
+            isSendButton = true;
+            matchedSelector = selector;
+            break;
+          }
+        } catch (e) {
+          // Skip invalid selectors
+        }
+      }
+      
+      // Check closest match if direct match failed
+      if (!isSendButton) {
+        for (const selector of sendButtonSelectors) {
+          try {
+            if (target.closest(selector)) {
+              isSendButton = true;
+              matchedSelector = selector + ' (closest)';
+              break;
+            }
+          } catch (e) {
+            // Skip invalid selectors
+          }
+        }
+      }
+      
+      // Alternative text-based detection
+      if (!isSendButton) {
+        const text = target.textContent?.trim().toLowerCase();
+        const ariaLabel = target.getAttribute('aria-label')?.toLowerCase();
+        
+        if ((text === 'send' || ariaLabel?.includes('send')) && 
+            (target.tagName === 'BUTTON' || target.getAttribute('role') === 'button')) {
+          isSendButton = true;
+          matchedSelector = 'text-based detection';
+        }
+      }
       
       if (isSendButton) {
-        console.log('✅ DEBUG: Gmail send button clicked!');
-        const composeWindow = target.closest('[role="dialog"], .nH.if');
+        console.log('✅ DEBUG: Gmail send button clicked! Matched by:', matchedSelector);
+        
+        // Look for compose window with multiple strategies
+        let composeWindow = target.closest('[role="dialog"]') || 
+                           target.closest('.nH.if') ||
+                           target.closest('[aria-label*="compose"]') ||
+                           target.closest('.M9') ||
+                           document.querySelector('.nH.if');
+        
         if (composeWindow) {
           console.log('🔧 DEBUG: Found compose window, scheduling analysis...');
+          // Prevent default and schedule analysis
+          e.preventDefault();
           setTimeout(() => {
             this.analyzeGmailEmail(composeWindow);
           }, 500);
         } else {
           console.log('❌ DEBUG: No compose window found');
+          // Try alternative approach - look for any compose-like container
+          const possibleContainers = document.querySelectorAll('[role="dialog"], .nH, .M9');
+          console.log('🔧 DEBUG: Found possible containers:', possibleContainers.length);
+          
+          if (possibleContainers.length > 0) {
+            console.log('🔧 DEBUG: Using first available container...');
+            setTimeout(() => {
+              this.analyzeGmailEmail(possibleContainers[0]);
+            }, 500);
+          }
         }
       }
     });
@@ -656,23 +797,47 @@ class EmailAnalyzer {
   }
 
   isValidEmail(emailData) {
-    // Email validation regex
+    console.log('🔧 DEBUG: Validating email data:', {
+      hasContent: !!emailData?.email_content,
+      contentLength: emailData?.email_content?.length,
+      hasRecipient: !!emailData?.recipient_email,
+      recipientValue: emailData?.recipient_email,
+      hasSender: !!emailData?.sender_email,
+      senderValue: emailData?.sender_email,
+      hasSubject: !!emailData?.subject,
+      subjectValue: emailData?.subject
+    });
+    
+    if (!emailData) {
+      console.log('❌ DEBUG: No email data provided');
+      return false;
+    }
+    
+    // Email validation regex (more lenient)
     const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
     
-    const hasContent = emailData.email_content && emailData.email_content.length > 10;
-    const hasRecipient = emailData.recipient_email && emailRegex.test(emailData.recipient_email);
-    const hasSender = emailData.sender_email && emailRegex.test(emailData.sender_email);
-    const hasSubject = emailData.subject && emailData.subject.length > 0;
+    const hasContent = emailData.email_content && emailData.email_content.length > 5;
+    const hasRecipient = emailData.recipient_email && emailData.recipient_email.includes('@');
+    const hasSender = emailData.sender_email && emailData.sender_email.includes('@');
+    const hasSubject = emailData.subject; // Allow empty subjects
     
     console.log('🔧 DEBUG: Email validation details:', {
       hasContent,
       hasRecipient,
       hasSender,
-      hasSubject,
+      hasSubject: hasSubject !== undefined,
       contentLength: emailData.email_content?.length
     });
     
-    return hasContent && hasRecipient && hasSender && hasSubject;
+    // Make subject optional but provide default if missing
+    if (!emailData.subject) {
+      emailData.subject = '(No Subject)';
+    }
+    
+    const isValid = hasContent && hasRecipient && hasSender;
+    console.log(isValid ? '✅ DEBUG: Email validation passed' : '❌ DEBUG: Email validation failed');
+    
+    return isValid;
   }
 
   generateEmailKey(emailData) {

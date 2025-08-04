@@ -158,7 +158,7 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
         // Show success notification
         chrome.notifications.create({
           type: 'basic',
-          iconUrl: 'icons/icon128.png',
+          iconUrl: chrome.runtime.getURL('icons/icon128.png'),
           title: 'Clio Login Successful',
           message: `Logged in as ${data.email}`
         });
@@ -186,7 +186,7 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
         // Show error notification
         chrome.notifications.create({
           type: 'basic',
-          iconUrl: 'icons/icon128.png',
+          iconUrl: chrome.runtime.getURL('icons/icon128.png'),
           title: 'Clio Login Failed',
           message: data.error || 'Authentication failed. Please try logging out of Clio and try again.'
         });
@@ -217,7 +217,7 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
       // Show error notification
       chrome.notifications.create({
         type: 'basic',
-        iconUrl: 'icons/icon128.png',
+        iconUrl: chrome.runtime.getURL('icons/icon128.png'),
         title: 'Clio Login Failed',
         message: 'Please try logging out of Clio at app.clio.com first, then try again.'
       });
@@ -327,9 +327,28 @@ async function analyzeEmail(emailData) {
     }
     
     // Get Clio user email and selected matter ID
-    const { clioUserEmail, selectedMatterId } = await chrome.storage.local.get(['clioUserEmail', 'selectedMatterId']);
+    const { clioUserEmail, selectedMatterId: localMatterId } = await chrome.storage.local.get(['clioUserEmail', 'selectedMatterId']);
+    
+    let selectedMatterId = localMatterId;
     
     if (clioUserEmail) {
+      // Try to get the latest matter preference from backend
+      try {
+        const preferencesResponse = await fetch(`http://127.0.0.1:8000/api/clio/preferences/?email=${encodeURIComponent(clioUserEmail)}`);
+        if (preferencesResponse.ok) {
+          const preferences = await preferencesResponse.json();
+          if (preferences.selected_matter_id) {
+            selectedMatterId = preferences.selected_matter_id;
+            console.log('🔧 DEBUG: Using matter from backend preferences:', selectedMatterId);
+            
+            // Update local storage to match backend
+            await chrome.storage.local.set({ selectedMatterId: selectedMatterId });
+          }
+        }
+      } catch (error) {
+        console.log('🔧 DEBUG: Could not fetch backend preferences, using local storage:', error.message);
+      }
+      
       emailData.sender_email = clioUserEmail;
       emailData.matter_id = selectedMatterId;
     }
@@ -339,6 +358,8 @@ async function analyzeEmail(emailData) {
       console.log('🔧 DEBUG: No matter selected - email will be analyzed without matter association');
       // Remove matter_id if not set to avoid backend validation errors
       delete emailData.matter_id;
+    } else {
+      console.log('🔧 DEBUG: Using selected matter ID:', selectedMatterId);
     }
     
     console.log('🔧 DEBUG: Preparing API request');

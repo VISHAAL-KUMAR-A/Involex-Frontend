@@ -49,6 +49,14 @@ async function saveSettings() {
       maxStoredAnalyses: parseInt(document.getElementById('maxStoredAnalyses').value)
     };
     
+    // Also get the selected matter ID from the dropdown if it exists
+    const clioMattersSelect = document.getElementById('clioMatters');
+    if (clioMattersSelect && clioMattersSelect.value) {
+      // Store matter selection in local storage (separate from settings)
+      await chrome.storage.local.set({ selectedMatterId: clioMattersSelect.value });
+      console.log('🔧 DEBUG: Matter selection saved with settings:', clioMattersSelect.value);
+    }
+    
     // Validate settings
     if (!settings.apiUrl || !settings.apiUrl.startsWith('http')) {
       throw new Error('Please enter a valid API URL');
@@ -253,7 +261,7 @@ chrome.storage.local.get(['clioUserEmail', 'clioAuthTime', 'selectedMatterId'], 
     // Load matters
     try {
       const matters = await fetchClioMatters();
-      populateMattersDropdown(matters, result.selectedMatterId);
+      await populateMattersDropdown(matters, result.selectedMatterId);
     } catch (error) {
       console.error('Error loading matters:', error);
       if (error.message.includes('authentication')) {
@@ -326,15 +334,83 @@ clioLogoutBtn.addEventListener('click', () => {
 });
 
 // Handle matter selection
-clioMattersSelect.addEventListener('change', (event) => {
+clioMattersSelect.addEventListener('change', async (event) => {
   const matterId = event.target.value;
-  chrome.storage.local.set({ selectedMatterId: matterId });
-  showNotification('Matter selection saved', 'success');
+  
+  try {
+    // Get user email from storage
+    const storage = await chrome.storage.local.get(['clioUserEmail']);
+    if (!storage.clioUserEmail) {
+      showNotification('Error: User not logged in', 'error');
+      return;
+    }
+
+    // Save to backend API
+    const response = await fetch('http://127.0.0.1:8000/api/clio/preferences/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        email: storage.clioUserEmail,
+        selected_matter_id: matterId || null
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    const result = await response.json();
+    console.log('🔧 DEBUG: Matter preference saved to backend:', result);
+
+    // Also save to local storage as backup
+    await chrome.storage.local.set({ selectedMatterId: matterId });
+    
+    if (matterId) {
+      showNotification('Matter selection saved', 'success');
+      console.log('🔧 DEBUG: Matter selection saved:', matterId);
+    } else {
+      showNotification('Matter selection cleared', 'info');
+      console.log('🔧 DEBUG: Matter selection cleared');
+    }
+  } catch (error) {
+    console.error('❌ Error saving matter preference:', error);
+    showNotification(`Error saving matter: ${error.message}`, 'error');
+    
+    // Fallback to local storage only
+    await chrome.storage.local.set({ selectedMatterId: matterId });
+    console.log('🔧 DEBUG: Fell back to local storage for matter selection');
+  }
 });
 
 // Populate matters dropdown
-function populateMattersDropdown(matters, selectedMatterId) {
+async function populateMattersDropdown(matters, fallbackSelectedMatterId) {
   clioMattersSelect.innerHTML = '<option value="">Select a matter...</option>';
+  
+  // First, try to get the user's saved preference from the backend
+  let selectedMatterId = fallbackSelectedMatterId;
+  try {
+    const storage = await chrome.storage.local.get(['clioUserEmail']);
+    if (storage.clioUserEmail) {
+      const response = await fetch(`http://127.0.0.1:8000/api/clio/preferences/?email=${encodeURIComponent(storage.clioUserEmail)}`);
+      if (response.ok) {
+        const preferences = await response.json();
+        if (preferences.selected_matter_id) {
+          selectedMatterId = preferences.selected_matter_id;
+          console.log('🔧 DEBUG: Loaded matter preference from backend:', selectedMatterId);
+          
+          // Update local storage to match backend
+          await chrome.storage.local.set({ selectedMatterId: selectedMatterId });
+        }
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error loading matter preference from backend:', error);
+    console.log('🔧 DEBUG: Using fallback matter selection');
+  }
   
   matters.forEach(matter => {
     const option = document.createElement('option');
@@ -351,6 +427,13 @@ function populateMattersDropdown(matters, selectedMatterId) {
   });
   
   clioMattersSelect.style.display = 'block';
+  
+  // If no matter is selected yet, show a helpful message
+  if (!selectedMatterId) {
+    showNotification('Please select a matter for email analysis', 'info');
+  } else {
+    console.log('🔧 DEBUG: Matter loaded:', selectedMatterId);
+  }
 }
 
 // Function to fetch Clio matters using message passing
@@ -386,7 +469,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // Load matters after successful login
       try {
         const matters = await fetchClioMatters();
-        populateMattersDropdown(matters);
+        await populateMattersDropdown(matters);
       } catch (error) {
         console.error('Error loading matters:', error);
         // Show error but keep user logged in - they can still use email analysis
